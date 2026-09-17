@@ -1,6 +1,6 @@
 <!doctype html><html><body>
 <script>
-var challenge_id = "notice-list-20260917";
+var challengeId = "notice-list-20260917";
 var a = 173;
 var b = 29;
 var operator = "+";
@@ -9,10 +9,10 @@ fetch('/dynamic_challenge', {
   method: 'POST',
   headers: {'Content-Type': 'application/json'},
   body: JSON.stringify({
-    challenge_id: challenge_id,
+    challenge_id: challengeId,
     answer: result,
     browser_info: browserInfo,
-    hash: simpleHash(challenge_id + result + navigator.userAgent.substring(0, 10))
+    hash: simpleHash(challengeId + result + navigator.userAgent.substring(0, 10))
   })
 });
 </script>

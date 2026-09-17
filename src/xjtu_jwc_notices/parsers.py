@@ -84,6 +84,18 @@ def _breadcrumb_category(soup: BeautifulSoup) -> str | None:
     return _normalized_text(links[-1]) if links else None
 
 
+def _notice_anchor_category(soup: BeautifulSoup, page_url: str) -> str | None:
+    categories: list[str] = []
+    for anchor in soup.select("a[href]"):
+        path = urlparse(urljoin(page_url, str(anchor["href"]))).path
+        if "/jxxx/jxtz2/" not in path and "/jxtz2/" not in path:
+            continue
+        text = _normalized_text(anchor)
+        if text and text != "教学通知":
+            categories.append(text)
+    return categories[-1] if categories else None
+
+
 def is_non_content_page(html: str) -> bool:
     """Return whether *html* is an access-control or challenge response."""
 
@@ -191,6 +203,7 @@ def parse_detail(html: str, url: str) -> NoticeDetail:
         heading=heading,
         category=(
             (_category_from(metadata) if metadata else None)
+            or _notice_anchor_category(soup, url)
             or _breadcrumb_category(soup)
             or _category_from(soup)
         ),

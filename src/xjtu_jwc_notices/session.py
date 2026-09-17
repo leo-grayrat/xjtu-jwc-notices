@@ -20,8 +20,13 @@ class ChallengeProtocolError(RuntimeError):
 
 
 _CHALLENGE_VARIABLES = {
-    name: re.compile(rf"\bvar\s+{name}\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|(-?\d+))\s*;")
-    for name in ("challenge_id", "a", "b", "operator")
+    name: re.compile(rf"\bvar\s+{variable}\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|(-?\d+))\s*;")
+    for name, variable in {
+        "challenge_id": "challengeId",
+        "a": "a",
+        "b": "b",
+        "operator": "operator",
+    }.items()
 }
 _TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_BROWSER_INFO = {
@@ -173,7 +178,7 @@ class XjtuSiteSession:
 
     @staticmethod
     def _challenge_values(html: str) -> tuple[str, int, int, str] | None:
-        if "challenge_id" not in html:
+        if "challengeId" not in html:
             return None
         values: dict[str, str] = {}
         for name, pattern in _CHALLENGE_VARIABLES.items():

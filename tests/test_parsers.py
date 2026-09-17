@@ -81,6 +81,15 @@ def test_parse_live_detail_supports_vsb_content_suffix_breadcrumb_and_all_body_t
     )
 
 
+def test_parse_detail_uses_last_non_generic_jxtz_anchor_without_breadcrumb_class() -> None:
+    detail = parse_detail(
+        fixture("live_detail_anchor_category.html"),
+        "https://jwc.xjtu.edu.cn/content.jsp?wbnewsid=48888",
+    )
+
+    assert detail.category == "竞赛安排"
+
+
 def test_parse_detail_marks_whitespace_only_body_empty() -> None:
     detail = parse_detail(fixture("empty_detail.html"), "https://jwc.xjtu.edu.cn/info/1033/40001.htm")
 

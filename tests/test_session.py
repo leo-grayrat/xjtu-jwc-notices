@@ -18,7 +18,7 @@ def test_simple_hash_matches_published_signed_32_bit_absolute_algorithm() -> Non
     assert simple_hash("notice-list-20260917202Mozilla/5.") == 764368191
 
 
-def test_get_solves_dynamic_challenge_then_retries_once(tmp_path: Path) -> None:
+def test_get_solves_camel_case_dynamic_challenge_then_retries_once(tmp_path: Path) -> None:
     calls: list[httpx.Request] = []
     target = "https://jwc.xjtu.edu.cn/jxtz2.htm"
 
@@ -69,7 +69,7 @@ def test_get_solves_dynamic_challenge_then_retries_once(tmp_path: Path) -> None:
 def test_get_rejects_changed_challenge_structure(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, text='<script>var challenge_id = "x";</script>', request=request
+            200, text='<script>var challengeId = "x";</script>', request=request
         )
 
     session = XjtuSiteSession(
