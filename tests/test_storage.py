@@ -105,6 +105,80 @@ def test_search_categories_status_and_opaque_pagination(tmp_path) -> None:
     assert store.search(limit=51)["items"]  # limit is capped rather than unbounded
 
 
+def test_search_escapes_fts_syntax_but_keeps_literal_query_matching(tmp_path) -> None:
+    store = NoticeStore(tmp_path / "notices.sqlite3")
+    store.initialize()
+    for notice_id, title, body in [
+        ("cpp", "C++ 课程", "C++ 课程说明"),
+        ("quote", '带引号的通知', '请阅读 "重要" 说明'),
+    ]:
+        store.upsert_detail(
+            notice_id=notice_id,
+            title=title,
+            category="教学运行",
+            published_date="2026-09-15",
+            source_url=f"https://jwc.xjtu.edu.cn/info/1033/{notice_id}.htm",
+            body_text=body,
+            body_html=f"<p>{body}</p>",
+            fetched_at="2026-09-17T00:00:00Z",
+        )
+
+    assert [row["notice_id"] for row in store.search(query="C++")["items"]] == ["cpp"]
+    assert [row["notice_id"] for row in store.search(query='"重要"')["items"]] == ["quote"]
+
+
+def test_empty_refresh_preserves_existing_archive_and_records_retryable_failure(tmp_path) -> None:
+    store = NoticeStore(tmp_path / "notices.sqlite3")
+    store.initialize()
+    store.upsert_detail(
+        notice_id="100",
+        title="通知",
+        category="教学运行",
+        published_date="2026-09-15",
+        source_url="https://jwc.xjtu.edu.cn/info/1033/100.htm",
+        body_text="旧正文",
+        body_html="<p>旧正文</p>",
+        fetched_at="2026-09-17T00:00:00Z",
+    )
+    old = store.get_notice("100")
+    run_id = store.begin_sync_run(started_at="2026-09-17T01:00:00Z")
+    store.upsert_detail(
+        notice_id="100",
+        title="通知更正",
+        category="教学运行",
+        published_date="2026-09-16",
+        source_url="https://jwc.xjtu.edu.cn/info/1033/100.htm",
+        body_text="",
+        body_html="",
+        fetched_at="2026-09-17T01:00:00Z",
+        run_id=run_id,
+    )
+
+    refreshed = store.get_notice("100")
+    assert refreshed["body_text"] == "旧正文"
+    assert refreshed["body_html"] == "<p>旧正文</p>"
+    assert refreshed["content_hash"] == old["content_hash"]
+    assert refreshed["fetch_status"] == "failed"
+    with store._connect() as connection:
+        failure = connection.execute(
+            "SELECT error_message FROM sync_failures WHERE notice_id = '100'"
+        ).fetchone()
+    assert failure is not None
+    assert "empty" in failure["error_message"]
+
+    store.upsert_detail(
+        notice_id="101",
+        title="全新空通知",
+        category="教学运行",
+        published_date="2026-09-16",
+        source_url="https://jwc.xjtu.edu.cn/info/1033/101.htm",
+        body_text="",
+        body_html="",
+        fetched_at="2026-09-17T01:00:00Z",
+    )
+    assert store.get_notice("101")["fetch_status"] == "empty_body"
+
+
 def test_sync_runs_and_known_metadata_are_recorded(tmp_path) -> None:
     store = NoticeStore(tmp_path / "notices.sqlite3")
     store.initialize()

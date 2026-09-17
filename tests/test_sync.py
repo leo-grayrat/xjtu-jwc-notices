@@ -159,3 +159,64 @@ def test_detail_failure_preserves_old_body_and_interrupted_run_resumes_completed
     resumed[url("2")] = Response(200, detail("2", "二", "教学运行", "2026-09-15", "二正文"))
     NoticeSyncService(FakeSession(resumed), interrupted_store).sync()
     assert interrupted_store.get_notice("2")["body_text"] == "二正文"
+
+
+def test_interrupted_initial_backfill_continues_past_known_pages_on_resume(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    page_two = "https://jwc.xjtu.edu.cn/jxtz2.htm?PAGENUM=2"
+    page_three = "https://jwc.xjtu.edu.cn/jxtz2.htm?PAGENUM=3"
+    page_four = "https://jwc.xjtu.edu.cn/jxtz2.htm?PAGENUM=4"
+    store = make_store(tmp_path)
+    first = {
+        start: Response(
+            200, list_page([("1", "第一页", "教学运行", "2026-09-15")], "jxtz2.htm?PAGENUM=2")
+        ),
+        page_two: Response(
+            200, list_page([("2", "第二页", "教学运行", "2026-09-14")], "jxtz2.htm?PAGENUM=3")
+        ),
+        page_three: KeyboardInterrupt(),
+        url("1"): Response(200, detail("1", "第一页", "教学运行", "2026-09-15", "第一页正文")),
+        url("2"): Response(200, detail("2", "第二页", "教学运行", "2026-09-14", "第二页正文")),
+    }
+    with pytest.raises(KeyboardInterrupt):
+        NoticeSyncService(FakeSession(first), store).sync()
+
+    resumed = dict(first)
+    resumed[page_three] = Response(
+        200, list_page([("3", "第三页", "教学运行", "2026-09-13")], "jxtz2.htm?PAGENUM=4")
+    )
+    resumed[page_four] = Response(200, list_page([]))
+    resumed[url("3")] = Response(
+        200, detail("3", "第三页", "教学运行", "2026-09-13", "第三页正文")
+    )
+    session = FakeSession(resumed)
+    NoticeSyncService(session, store).sync()
+
+    assert page_three in session.calls
+    assert store.get_notice("3")["body_text"] == "第三页正文"
+
+
+def test_interrupted_changed_notice_is_marked_for_retry_before_detail_fetch(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    store = make_store(tmp_path)
+    initial = {
+        start: Response(200, list_page([("1", "原通知", "教学运行", "2026-09-15")])),
+        url("1"): Response(200, detail("1", "原通知", "教学运行", "2026-09-15", "旧正文")),
+    }
+    NoticeSyncService(FakeSession(initial), store, refresh_after_days=None).sync()
+
+    changed = {
+        start: Response(200, list_page([("1", "更正通知", "教学运行", "2026-09-16")])),
+        url("1"): KeyboardInterrupt(),
+    }
+    with pytest.raises(KeyboardInterrupt):
+        NoticeSyncService(FakeSession(changed), store, refresh_after_days=None).sync()
+    assert store.get_notice("1")["body_text"] == "旧正文"
+    assert store.get_notice("1")["fetch_status"] == "failed"
+
+    resumed = dict(changed)
+    resumed[url("1")] = Response(
+        200, detail("1", "更正通知", "教学运行", "2026-09-16", "新正文")
+    )
+    NoticeSyncService(FakeSession(resumed), store, refresh_after_days=None).sync()
+    assert store.get_notice("1")["body_text"] == "新正文"

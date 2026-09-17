@@ -52,7 +52,7 @@ class NoticeSyncService:
         """Synchronize only discovered list pages and return concrete run statistics."""
 
         self.store.initialize()
-        initial_run = not self.store.list_known_notice_metadata()
+        initial_run = not self.store.initial_backfill_complete()
         run_id = self.store.begin_sync_run(started_at=self.now())
         stats = {"pages": 0, "processed": 0, "ok": 0, "empty": 0, "failed": 0, "skipped": 0}
         current_url: str | None = self.list_url
@@ -89,7 +89,11 @@ class NoticeSyncService:
                     break
                 current_url = page.next_page_url
             self.store.finish_sync_run(
-                run_id, status="completed", stats=stats, finished_at=self.now()
+                run_id,
+                status="completed",
+                stats=stats,
+                finished_at=self.now(),
+                backfill_completed=initial_run,
             )
             return stats
         except KeyboardInterrupt:
@@ -163,6 +167,7 @@ class NoticeSyncService:
             published_date=entry.published_date,
             source_url=entry.url,
             seen_at=seen_at,
+            needs_fetch=True,
         )
         stats["processed"] += 1
         try:

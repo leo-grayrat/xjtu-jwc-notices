@@ -104,6 +104,10 @@ class NoticeStore:
                     error_message TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS sync_failures_notice_idx ON sync_failures(notice_id);
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 CREATE VIRTUAL TABLE IF NOT EXISTS notices_fts USING fts5(
                     notice_id UNINDEXED, title, body_text
                 );
@@ -132,6 +136,10 @@ class NoticeStore:
                FROM notices ORDER BY published_date DESC, notice_id DESC"""
         )
 
+    def initial_backfill_complete(self) -> bool:
+        state = self._row("SELECT value FROM sync_state WHERE key = 'initial_backfill_complete'")
+        return state is not None and state["value"] == "1"
+
     def mark_seen(
         self,
         *,
@@ -141,6 +149,7 @@ class NoticeStore:
         published_date: date | str,
         source_url: str,
         seen_at: str | None = None,
+        needs_fetch: bool = False,
     ) -> None:
         seen_at = seen_at or utc_now()
         with self._connect() as connection:
@@ -154,6 +163,7 @@ class NoticeStore:
                 ON CONFLICT(notice_id) DO UPDATE SET
                     title=excluded.title, category=excluded.category,
                     published_date=excluded.published_date, source_url=excluded.source_url,
+                    fetch_status=CASE WHEN ? THEN 'failed' ELSE notices.fetch_status END,
                     last_seen_at=excluded.last_seen_at, updated_at=excluded.updated_at
                 """,
                 (
@@ -165,6 +175,7 @@ class NoticeStore:
                     seen_at,
                     seen_at,
                     seen_at,
+                    needs_fetch,
                 ),
             )
             body_row = connection.execute(
@@ -191,13 +202,40 @@ class NoticeStore:
     ) -> None:
         """Store one fetched detail atomically, including its FTS document."""
 
-        del run_id  # run linkage is retained by sync_runs; item writes stay independently atomic.
         fetched_at = fetched_at or utc_now()
         body_text = body_text.strip()
         status = "ok" if body_text else "empty_body"
         content_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
         source_url = canonicalize_url(source_url)
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT body_text FROM notices WHERE notice_id = ?", (notice_id,)
+            ).fetchone()
+            if not body_text and existing is not None and str(existing["body_text"] or "").strip():
+                connection.execute(
+                    """UPDATE notices SET title=?, category=?, published_date=?, source_url=?,
+                       fetch_status='failed', last_seen_at=?, updated_at=? WHERE notice_id=?""",
+                    (
+                        title,
+                        category,
+                        _date_value(published_date),
+                        source_url,
+                        fetched_at,
+                        fetched_at,
+                        notice_id,
+                    ),
+                )
+                connection.execute("DELETE FROM notices_fts WHERE notice_id = ?", (notice_id,))
+                connection.execute(
+                    "INSERT INTO notices_fts(notice_id, title, body_text) VALUES (?, ?, ?)",
+                    (notice_id, title, existing["body_text"]),
+                )
+                connection.execute(
+                    """INSERT INTO sync_failures(run_id, notice_id, occurred_at, error_message)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, notice_id, fetched_at, "empty detail body; retained existing archive"),
+                )
+                return
             connection.execute(
                 """
                 INSERT INTO notices(
@@ -271,6 +309,7 @@ class NoticeStore:
         stats: Mapping[str, object],
         finished_at: str | None = None,
         error_message: str | None = None,
+        backfill_completed: bool = False,
     ) -> None:
         if status not in {"completed", "failed", "interrupted"}:
             raise ValueError("invalid final run status")
@@ -280,6 +319,13 @@ class NoticeStore:
                    WHERE run_id=?""",
                 (finished_at or utc_now(), status, json.dumps(dict(stats)), error_message, run_id),
             )
+            if backfill_completed:
+                if status != "completed":
+                    raise ValueError("only a completed run can complete initial backfill")
+                connection.execute(
+                    """INSERT INTO sync_state(key, value) VALUES ('initial_backfill_complete', '1')
+                       ON CONFLICT(key) DO UPDATE SET value=excluded.value"""
+                )
 
     def get_notice(self, notice_id: str) -> dict[str, object] | None:
         return self._row("SELECT * FROM notices WHERE notice_id = ?", (notice_id,))
@@ -305,7 +351,9 @@ class NoticeStore:
                 "WHERE notices_fts MATCH ?) "
                 "OR notices.title LIKE ? OR notices.body_text LIKE ?)"
             )
-            parameters.extend((query.strip(), f"%{query.strip()}%", f"%{query.strip()}%"))
+            literal_query = query.strip()
+            fts_phrase = '"' + literal_query.replace('"', '""') + '"'
+            parameters.extend((fts_phrase, f"%{literal_query}%", f"%{literal_query}%"))
             snippet = "substr(COALESCE(notices.body_text, notices.title), 1, 240) AS snippet"
         if date_from:
             clauses.append("notices.published_date >= ?")
