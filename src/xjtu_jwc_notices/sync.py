@@ -9,7 +9,7 @@ from typing import Protocol
 from .parsers import NoticeListEntry, extract_notice_id, parse_detail, parse_list
 from .storage import NoticeStore, canonicalize_url, utc_now
 
-DEFAULT_LIST_URL = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+DEFAULT_LIST_URL = "https://jwc.xjtu.edu.cn/jxxx/jxtz2.htm"
 DEFAULT_CUTOFF = date(2026, 1, 1)
 
 
