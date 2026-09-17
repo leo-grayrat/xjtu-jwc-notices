@@ -27,6 +27,18 @@ def test_parse_jxtz2_list_extracts_entries_and_next_page() -> None:
     assert page.next_page_url == "https://jwc.xjtu.edu.cn/jxtz2.htm?PAGENUM=2"
 
 
+def test_parse_live_list_uses_bracketed_category_and_legacy_link() -> None:
+    page = parse_list(fixture("live_jxtz2_list.html"), "https://jwc.xjtu.edu.cn/jxtz2.htm")
+
+    assert page.entries[0].category == "竞赛安排"
+    assert page.entries[0].title == "2026 年全国大学生竞赛报名通知"
+    assert page.entries[0].url.endswith(
+        "content.jsp?urltype=news.NewsContentUrl&wbtreeid=1033&wbnewsid=48888"
+    )
+    assert page.entries[1].category == "教学运行"
+    assert page.entries[1].title == "秋季学期课程调整通知"
+
+
 @pytest.mark.parametrize(
     ("url", "html", "expected"),
     [
@@ -53,6 +65,20 @@ def test_parse_detail_preserves_text_and_html() -> None:
     assert detail.body_text == "各学院（部）及全体同学：\n选课工作将于 9 月 20 日 开始。"
     assert "<strong>9 月 20 日</strong>" in detail.body_html
     assert not detail.is_empty
+
+
+def test_parse_live_detail_supports_vsb_content_suffix_breadcrumb_and_all_body_text() -> None:
+    detail = parse_detail(
+        fixture("live_jxtz2_detail.html"),
+        "https://jwc.xjtu.edu.cn/content.jsp?wbnewsid=48888",
+    )
+
+    assert detail.notice_id == "48888"
+    assert detail.heading == "2026 年全国大学生竞赛报名通知"
+    assert detail.category == "竞赛安排"
+    assert detail.body_text == (
+        "请各学院按时组织报名。\n报名截止日期：9 月 30 日\n竞赛联系人：张老师。\n逾期不再受理。"
+    )
 
 
 def test_parse_detail_marks_whitespace_only_body_empty() -> None:

@@ -6,7 +6,10 @@ import json
 import re
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -21,11 +24,28 @@ _CHALLENGE_VARIABLES = {
     for name in ("challenge_id", "a", "b", "operator")
 }
 _TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+DEFAULT_BROWSER_INFO = {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "language": "zh-CN",
+    "platform": "Win32",
+    "screen": {"width": 1920, "height": 1080, "colorDepth": 24},
+    "timezoneOffset": -480,
+    "hasTouchEvents": False,
+}
 
 
-def simple_hash(challenge_id: str, a: int, b: int, operator: str) -> str:
+def simple_hash(value: str) -> int:
     """Run the challenge page's published JavaScript ``simpleHash`` routine."""
 
+    hashed = 0
+    for character in value:
+        hashed = ((hashed << 5) - hashed + ord(character)) & 0xFFFFFFFF
+    if hashed >= 0x80000000:
+        hashed -= 0x100000000
+    return abs(hashed)
+
+
+def _challenge_result(a: int, b: int, operator: str) -> int:
     operations: dict[str, Callable[[int, int], int]] = {
         "+": lambda left, right: left + right,
         "-": lambda left, right: left - right,
@@ -34,17 +54,10 @@ def simple_hash(challenge_id: str, a: int, b: int, operator: str) -> str:
     if operator == "/":
         if b == 0 or a % b:
             raise ChallengeProtocolError("challenge division is not an exact integer")
-        result = a // b
+        return a // b
     elif operation := operations.get(operator):
-        result = operation(a, b)
-    else:
-        raise ChallengeProtocolError(f"unsupported challenge operator {operator!r}")
-
-    value = f"{challenge_id}:{result}"
-    hashed = 0
-    for character in value:
-        hashed = ((hashed << 5) - hashed + ord(character)) & 0xFFFFFFFF
-    return f"{hashed:08x}"
+        return operation(a, b)
+    raise ChallengeProtocolError(f"unsupported challenge operator {operator!r}")
 
 
 class XjtuSiteSession:
@@ -59,6 +72,7 @@ class XjtuSiteSession:
         delay: Callable[[float], None] = time.sleep,
         backoff: Callable[[float], None] = time.sleep,
         max_retries: int = 3,
+        browser_info: dict[str, object] | None = None,
     ) -> None:
         if request_delay_seconds < 0:
             raise ValueError("request_delay_seconds must be non-negative")
@@ -68,6 +82,7 @@ class XjtuSiteSession:
         self.delay = delay
         self.backoff = backoff
         self.max_retries = max_retries
+        self.browser_info = browser_info or DEFAULT_BROWSER_INFO
         self._load_cookies()
 
     def _load_cookies(self) -> None:
@@ -83,6 +98,10 @@ class XjtuSiteSession:
             required_keys = ("name", "value", "domain", "path")
             if not isinstance(item, dict) or not all(key in item for key in required_keys):
                 raise ChallengeProtocolError("persisted cookie file has changed structure")
+            if not all(isinstance(item[key], str) for key in required_keys):
+                raise ChallengeProtocolError("persisted cookie file has invalid values")
+            if not item["name"] or not item["domain"] or not item["path"].startswith("/"):
+                raise ChallengeProtocolError("persisted cookie file has invalid values")
             self.client.cookies.set(
                 item["name"], item["value"], domain=item["domain"], path=item["path"]
             )
@@ -98,9 +117,17 @@ class XjtuSiteSession:
             }
             for cookie in self.client.cookies.jar
         ]
-        self.cookie_file.write_text(
-            json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.cookie_file.parent,
+            prefix=f".{self.cookie_file.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_file.write(json.dumps(cookies, ensure_ascii=False, indent=2))
+            temporary_path = Path(temporary_file.name)
+        temporary_path.replace(self.cookie_file)
 
     def close(self) -> None:
         self._save_cookies()
@@ -115,8 +142,18 @@ class XjtuSiteSession:
     def _retry_delay(self, response: httpx.Response | None, attempt: int) -> float:
         if response is not None:
             retry_after = response.headers.get("Retry-After")
-            if retry_after and retry_after.isdigit():
-                return float(retry_after)
+            if retry_after:
+                try:
+                    return max(0.0, float(retry_after))
+                except ValueError:
+                    try:
+                        retry_at = parsedate_to_datetime(retry_after)
+                    except (TypeError, ValueError):
+                        retry_at = None
+                    if retry_at is not None:
+                        if retry_at.tzinfo is None:
+                            retry_at = retry_at.replace(tzinfo=UTC)
+                        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
         return float(2**attempt)
 
     def _request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
@@ -151,11 +188,20 @@ class XjtuSiteSession:
 
     def _solve_challenge(self, original_url: str, values: tuple[str, int, int, str]) -> None:
         challenge_id, a, b, operator = values
-        answer = simple_hash(challenge_id, a, b, operator)
+        answer = _challenge_result(a, b, operator)
+        user_agent = self.browser_info.get("userAgent")
+        if not isinstance(user_agent, str):
+            raise ChallengeProtocolError("browser_info must contain a string userAgent")
+        payload = {
+            "challenge_id": challenge_id,
+            "answer": answer,
+            "browser_info": self.browser_info,
+            "hash": simple_hash(f"{challenge_id}{answer}{user_agent[:10]}"),
+        }
         response = self._request(
             "POST",
             urljoin(original_url, "/dynamic_challenge"),
-            data={"challenge_id": challenge_id, "answer": answer},
+            json=payload,
         )
         try:
             payload = response.json()

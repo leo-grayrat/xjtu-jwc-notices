@@ -8,7 +8,7 @@ from datetime import date
 from typing import Final
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 
 class ParseError(ValueError):
@@ -26,6 +26,7 @@ _DATE_PATTERN: Final = re.compile(
 _MODERN_ID_PATTERN: Final = re.compile(r"/info/[^/]+/(\d+)\.htm(?:$|[?#])", re.I)
 _NEXT_TEXT_PATTERN: Final = re.compile(r"^(?:下一页|下页|next(?:\s*page)?)$", re.I)
 _CHALLENGE_MARKER: Final = re.compile(r"\bchallenge_id\b", re.I)
+_BRACKETED_CATEGORY: Final = re.compile(r"^\s*\[([^\]]+)\]\s*(.+)$")
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,14 @@ def _category_from(element: Tag) -> str | None:
     return match.group(1) if match else None
 
 
+def _breadcrumb_category(soup: BeautifulSoup) -> str | None:
+    breadcrumb = soup.select_one(".breadcrumb, .position, .location")
+    if breadcrumb is None:
+        return None
+    links = breadcrumb.select("a")
+    return _normalized_text(links[-1]) if links else None
+
+
 def is_non_content_page(html: str) -> bool:
     """Return whether *html* is an access-control or challenge response."""
 
@@ -115,11 +124,15 @@ def parse_list(html: str, page_url: str) -> NoticeListPage:
     soup = BeautifulSoup(html, "html.parser")
     entries: list[NoticeListEntry] = []
     for item in soup.select("li"):
-        link = item.select_one('a[href*="/info/"], a[href*="info/"]')
+        link = item.select_one('a[href*="/info/"], a[href*="info/"], a[href*="content.jsp"]')
         if link is None:
             continue
         title = _normalized_text(link)
         category = _category_from(item)
+        bracketed_category = _BRACKETED_CATEGORY.match(title)
+        if bracketed_category:
+            category = category or bracketed_category.group(1)
+            title = bracketed_category.group(2)
         published_date = _parse_date(_normalized_text(item))
         href = link.get("href")
         if not title or not category or not published_date or not href:
@@ -142,11 +155,17 @@ def parse_list(html: str, page_url: str) -> NoticeListPage:
 
 
 def _body_text(body: Tag) -> str:
-    paragraphs = body.select("p")
-    if paragraphs:
-        texts = [_normalized_text(paragraph) for paragraph in paragraphs]
-        return "\n".join(text for text in texts if text)
-    return _normalized_text(body)
+    parts: list[str] = []
+    for child in body.children:
+        if isinstance(child, NavigableString):
+            text = " ".join(str(child).split())
+        elif isinstance(child, Tag):
+            text = _normalized_text(child)
+        else:
+            continue
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
 
 
 def parse_detail(html: str, url: str) -> NoticeDetail:
@@ -155,10 +174,12 @@ def parse_detail(html: str, url: str) -> NoticeDetail:
     if is_non_content_page(html):
         raise NonContentPageError("detail response is an access-control or challenge page")
     soup = BeautifulSoup(html, "html.parser")
-    body = soup.select_one("#vsb_content, .v_news_content, .article-content, .content")
+    body = soup.select_one(
+        "#vsb_content, [id^=\"vsb_content_\"], .v_news_content, .article-content, .content"
+    )
     if body is None:
         raise ParseError("notice detail has no recognized content container")
-    heading_element = soup.select_one("h1, .title, .article-title")
+    heading_element = soup.select_one("h1, h3, .title, .article-title")
     if heading_element is None or not (heading := _normalized_text(heading_element)):
         raise ParseError("notice detail has no heading")
 
@@ -168,7 +189,11 @@ def parse_detail(html: str, url: str) -> NoticeDetail:
     return NoticeDetail(
         notice_id=extract_notice_id(url, html),
         heading=heading,
-        category=_category_from(metadata) if metadata else _category_from(soup),
+        category=(
+            (_category_from(metadata) if metadata else None)
+            or _breadcrumb_category(soup)
+            or _category_from(soup)
+        ),
         published_date=_parse_date(metadata_text),
         body_text=body_text,
         body_html="".join(str(child) for child in body.contents).strip(),
