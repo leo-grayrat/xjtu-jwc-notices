@@ -50,14 +50,32 @@ def _cursor_decode(cursor: str) -> tuple[str, str]:
 class NoticeStore:
     """A small transactional archive, designed for item-by-item resumable syncs."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
         self.path = Path(path)
+        self.read_only = read_only
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        if self.read_only:
+            connection = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+        else:
+            connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    def validate_schema(self) -> None:
+        """Validate an existing archive without changing it."""
+
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()
+        except sqlite3.Error as error:
+            raise RuntimeError(f"notice database is unavailable or invalid: {error}") from error
+        if row is None or row[0] != SCHEMA_VERSION:
+            version = None if row is None else row[0]
+            raise RuntimeError(f"unsupported database schema version {version}")
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

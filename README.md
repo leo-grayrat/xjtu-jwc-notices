@@ -40,10 +40,10 @@ uv run xjtu-notices schedule uninstall
 
 ## MCP
 
-stdio 服务器入口为：
+如果仓库位于 `<仓库绝对路径>`，可直接使用其中的虚拟环境入口：
 
 ```powershell
-E:\Project\Git\Tool\xjtu-jwc-notices\.venv\Scripts\xjtu-notices-mcp.exe
+<仓库绝对路径>\.venv\Scripts\xjtu-notices-mcp.exe
 ```
 
 通用 MCP 客户端配置示例：
@@ -52,7 +52,13 @@ E:\Project\Git\Tool\xjtu-jwc-notices\.venv\Scripts\xjtu-notices-mcp.exe
 {
   "mcpServers": {
     "xjtu-jwc-notices": {
-      "command": "E:\\Project\\Git\\Tool\\xjtu-jwc-notices\\.venv\\Scripts\\xjtu-notices-mcp.exe"
+      "command": "uv",
+      "args": [
+        "--directory",
+        "<仓库绝对路径>",
+        "run",
+        "xjtu-notices-mcp"
+      ]
     }
   }
 }
@@ -72,4 +78,3 @@ E:\Project\Git\Tool\xjtu-jwc-notices\.venv\Scripts\xjtu-notices-mcp.exe
 - `status` 显示最近同步是否成功；`check` 检查 SQLite 与全文索引一致性。
 - 单条正文为空或抓取失败时会在以后重试；已有成功正文不会被空响应覆盖。
 - 若任务计划运行失败，先在终端执行 `uv run xjtu-notices sync` 查看具体错误。
-

@@ -73,3 +73,12 @@ def test_stdio_server_registers_exactly_the_four_public_tools():
         "list_categories",
         "get_sync_status",
     }
+
+
+def test_mcp_service_can_query_database_opened_in_sqlite_read_only_mode(tmp_path):
+    populated_store(tmp_path)
+    readonly_store = NoticeStore(tmp_path / "notices.db", read_only=True)
+
+    service = NoticeMcpService(readonly_store)
+
+    assert service.get_sync_status()["notice_count"] == 1

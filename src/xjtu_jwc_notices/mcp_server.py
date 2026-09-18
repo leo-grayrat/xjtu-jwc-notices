@@ -16,7 +16,7 @@ class NoticeMcpService:
 
     def __init__(self, store: NoticeStore) -> None:
         self.store = store
-        self.store.initialize()
+        self.store.validate_schema()
 
     def _data_as_of(self) -> str | None:
         return self.store.search(limit=1)["data_as_of"]  # type: ignore[return-value]
@@ -60,7 +60,7 @@ mcp = FastMCP("xjtu-jwc-notices")
 def _default_service() -> NoticeMcpService:
     global _service
     if _service is None:
-        _service = NoticeMcpService(NoticeStore(AppPaths.default().database))
+        _service = NoticeMcpService(NoticeStore(AppPaths.default().database, read_only=True))
     return _service
 
 
@@ -107,4 +107,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
