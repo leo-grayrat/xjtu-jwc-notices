@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,14 +19,8 @@ class AppPaths:
         return cls(directory, directory / "notices.db", directory / "cookies.json")
 
     @classmethod
-    def default(cls, *, platform: str | None = None) -> AppPaths:
+    def default(cls, *, project_root: Path | None = None) -> AppPaths:
         if os.environ.get("XJTU_JWC_NOTICES_DATA_DIR"):
             return cls.from_data_dir(os.environ["XJTU_JWC_NOTICES_DATA_DIR"])
-        current_platform = platform or sys.platform
-        if current_platform == "win32" and os.environ.get("LOCALAPPDATA"):
-            root = Path(os.environ["LOCALAPPDATA"])
-        elif os.environ.get("XDG_DATA_HOME"):
-            root = Path(os.environ["XDG_DATA_HOME"])
-        else:
-            root = Path.home() / ".local" / "share"
-        return cls.from_data_dir(root / "xjtu-jwc-notices")
+        root = project_root or Path(__file__).resolve().parents[2]
+        return cls.from_data_dir(root / "data")

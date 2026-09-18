@@ -24,9 +24,10 @@ uv run xjtu-notices status
 uv run xjtu-notices check
 ```
 
-默认数据目录为 `%LOCALAPPDATA%\xjtu-jwc-notices`，包含 `notices.db` 和
-`cookies.json`。可在命令前加 `--data-dir D:\somewhere` 覆盖；也可以设置
-`XJTU_JWC_NOTICES_DATA_DIR` 环境变量（MCP 服务读取自定义归档时尤其适用）。
+默认数据目录为仓库内的 `data` 文件夹，数据库位置是
+`E:\Project\Git\Tool\xjtu-jwc-notices\data\notices.db`。该文件夹已被 Git
+忽略，不会提交。可在命令前加 `--data-dir D:\somewhere` 覆盖；也可以设置
+`XJTU_JWC_NOTICES_DATA_DIR` 环境变量。
 
 安装每天 08:00 运行的当前用户 Windows 任务：
 

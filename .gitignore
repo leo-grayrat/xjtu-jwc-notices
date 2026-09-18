@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp*/
 .ruff_cache/
+data/
 *.py[cod]
 *.db
 *.sqlite3
