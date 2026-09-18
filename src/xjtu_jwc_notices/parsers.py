@@ -128,6 +128,15 @@ def extract_notice_id(url: str, html: str = "") -> str:
     raise ParseError(f"could not find a stable notice ID in {url!r}")
 
 
+def _is_notice_href(href: str) -> bool:
+    parsed = urlparse(href)
+    if _MODERN_ID_PATTERN.search(parsed.path):
+        return True
+    return parsed.path.lower().endswith("/content.jsp") and bool(
+        parse_qs(parsed.query).get("wbnewsid")
+    )
+
+
 def parse_list(html: str, page_url: str) -> NoticeListPage:
     """Parse a ``jxtz2`` list response and its discovered next page."""
 
@@ -136,7 +145,14 @@ def parse_list(html: str, page_url: str) -> NoticeListPage:
     soup = BeautifulSoup(html, "html.parser")
     entries: list[NoticeListEntry] = []
     for item in soup.select("li"):
-        link = item.select_one('a[href*="/info/"], a[href*="info/"], a[href*="content.jsp"]')
+        link = next(
+            (
+                candidate
+                for candidate in item.select("a[href]")
+                if _is_notice_href(str(candidate.get("href", "")))
+            ),
+            None,
+        )
         if link is None:
             continue
         title = _normalized_text(link)
