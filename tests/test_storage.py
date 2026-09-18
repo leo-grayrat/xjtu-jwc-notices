@@ -159,7 +159,7 @@ def test_empty_refresh_preserves_existing_archive_and_records_retryable_failure(
     assert refreshed["body_html"] == "<p>旧正文</p>"
     assert refreshed["content_hash"] == old["content_hash"]
     assert refreshed["fetch_status"] == "failed"
-    with store._connect() as connection:
+    with store._connection() as connection:
         failure = connection.execute(
             "SELECT error_message FROM sync_failures WHERE notice_id = '100'"
         ).fetchone()
@@ -220,3 +220,28 @@ def test_integrity_keeps_a_title_only_fts_row_for_a_failed_new_detail(tmp_path) 
 
     assert store.integrity_check()["ok"] is True
     assert store.search(query="暂时无法获取")["items"][0]["notice_id"] == "broken"
+
+
+def test_store_connection_context_always_closes_connection(tmp_path) -> None:
+    store = NoticeStore(tmp_path / "notices.sqlite3")
+    connection = store._connect()
+    closed = False
+
+    class ConnectionProxy:
+        def __enter__(self):
+            return connection
+
+        def __exit__(self, *args):
+            return False
+
+        def close(self):
+            nonlocal closed
+            closed = True
+            connection.close()
+
+    store._connect = lambda: ConnectionProxy()  # type: ignore[method-assign]
+
+    with store._connection():
+        pass
+
+    assert closed is True

@@ -25,7 +25,8 @@ uv run xjtu-notices check
 ```
 
 默认数据目录为 `%LOCALAPPDATA%\xjtu-jwc-notices`，包含 `notices.db` 和
-`cookies.json`。可在命令前加 `--data-dir D:\somewhere` 覆盖。
+`cookies.json`。可在命令前加 `--data-dir D:\somewhere` 覆盖；也可以设置
+`XJTU_JWC_NOTICES_DATA_DIR` 环境变量（MCP 服务读取自定义归档时尤其适用）。
 
 安装每天 08:00 运行的当前用户 Windows 任务：
 
@@ -36,7 +37,8 @@ uv run xjtu-notices schedule uninstall
 ```
 
 其他时间可用 `schedule install --time 21:30`。安装命令会替换同名任务
-`XJTU JWC Notices Sync`。
+`XJTU JWC Notices Sync`，并把安装时选定的数据目录写入任务命令，因此
+`--data-dir` 不会在计划任务中丢失。
 
 ## MCP
 

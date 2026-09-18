@@ -57,8 +57,31 @@ class NoticeSyncService:
         stats = {"pages": 0, "processed": 0, "ok": 0, "empty": 0, "failed": 0, "skipped": 0}
         current_url: str | None = self.list_url
         seen_pages: set[str] = set()
+        attempted_ids: set[str] = set()
         quiet_pages = 0
         try:
+            if not initial_run:
+                for known in self.store.list_known_notice_metadata():
+                    retry_due = str(known["fetch_status"]) in {
+                        "failed",
+                        "empty_body",
+                    } or self._is_stale(known.get("fetched_at"))
+                    published_date = date.fromisoformat(str(known["published_date"]))
+                    if not retry_due or published_date < self.cutoff:
+                        continue
+                    notice_id = str(known["notice_id"])
+                    attempted_ids.add(notice_id)
+                    self._sync_entry(
+                        NoticeListEntry(
+                            title=str(known["title"]),
+                            category=str(known["category"]),
+                            published_date=published_date,
+                            url=str(known["source_url"]),
+                        ),
+                        notice_id,
+                        run_id,
+                        stats,
+                    )
             while current_url is not None and current_url not in seen_pages:
                 seen_pages.add(current_url)
                 page = self._get_list_page(current_url)
@@ -68,8 +91,9 @@ class NoticeSyncService:
                 for entry in entries:
                     notice_id = extract_notice_id(entry.url)
                     known = self.store.get_known_notice_metadata(notice_id)
-                    if self._actionable(entry, known):
+                    if self._actionable(entry, known) and notice_id not in attempted_ids:
                         page_actionable = True
+                        attempted_ids.add(notice_id)
                         self._sync_entry(entry, notice_id, run_id, stats)
                     else:
                         self.store.mark_seen(
@@ -88,12 +112,18 @@ class NoticeSyncService:
                 if quiet_pages >= 2:
                     break
                 current_url = page.next_page_url
+            run_status = "failed" if stats["failed"] else "completed"
             self.store.finish_sync_run(
                 run_id,
-                status="completed",
+                status=run_status,
                 stats=stats,
                 finished_at=self.now(),
-                backfill_completed=initial_run,
+                error_message=(
+                    f'{stats["failed"]} notice detail request(s) failed'
+                    if stats["failed"]
+                    else None
+                ),
+                backfill_completed=initial_run and not stats["failed"],
             )
             return stats
         except KeyboardInterrupt:
@@ -178,7 +208,7 @@ class NoticeSyncService:
             if detail.notice_id != notice_id:
                 raise SyncError(f"detail ID {detail.notice_id} does not match list ID {notice_id}")
             body_text = detail.body_text
-            self.store.upsert_detail(
+            saved_status = self.store.upsert_detail(
                 notice_id=notice_id,
                 title=detail.heading or entry.title,
                 category=detail.category or entry.category,
@@ -189,7 +219,13 @@ class NoticeSyncService:
                 fetched_at=self.now(),
                 run_id=run_id,
             )
-            stats["empty" if detail.is_empty else "ok"] += 1
+            stats[
+                "failed"
+                if saved_status == "failed"
+                else "empty"
+                if saved_status == "empty_body"
+                else "ok"
+            ] += 1
         except KeyboardInterrupt:
             raise
         except Exception as error:

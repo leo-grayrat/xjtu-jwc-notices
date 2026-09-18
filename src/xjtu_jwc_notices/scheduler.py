@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 TASK_NAME = "XJTU JWC Notices Sync"
 _TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -24,10 +25,21 @@ class TaskScheduler:
     def _run(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self.runner(list(arguments), check=False, capture_output=True, text=True)
 
-    def install(self, time: str = "08:00") -> subprocess.CompletedProcess[str]:
+    def install(
+        self, time: str = "08:00", *, data_dir: Path
+    ) -> subprocess.CompletedProcess[str]:
         if not _TIME_PATTERN.fullmatch(time):
             raise ValueError("time must use 24-hour HH:MM format")
-        action = f'"{self.python_executable}" -m xjtu_jwc_notices.cli sync'
+        action = subprocess.list2cmdline(
+            [
+                self.python_executable,
+                "-m",
+                "xjtu_jwc_notices.cli",
+                "--data-dir",
+                str(data_dir.resolve()),
+                "sync",
+            ]
+        )
         return self._run(
             [
                 "schtasks.exe",
@@ -49,4 +61,3 @@ class TaskScheduler:
 
     def uninstall(self) -> subprocess.CompletedProcess[str]:
         return self._run(["schtasks.exe", "/Delete", "/TN", TASK_NAME, "/F"])
-

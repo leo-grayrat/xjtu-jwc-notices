@@ -7,6 +7,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -63,11 +64,22 @@ class NoticeStore:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    @contextmanager
+    def _connection(self):
+        """Yield a transaction and always release its Windows file handle."""
+
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def validate_schema(self) -> None:
         """Validate an existing archive without changing it."""
 
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 row = connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()
@@ -79,7 +91,7 @@ class NoticeStore:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -170,7 +182,7 @@ class NoticeStore:
         needs_fetch: bool = False,
     ) -> None:
         seen_at = seen_at or utc_now()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO notices(
@@ -217,7 +229,7 @@ class NoticeStore:
         body_html: str,
         fetched_at: str | None = None,
         run_id: int | None = None,
-    ) -> None:
+    ) -> str:
         """Store one fetched detail atomically, including its FTS document."""
 
         fetched_at = fetched_at or utc_now()
@@ -225,7 +237,7 @@ class NoticeStore:
         status = "ok" if body_text else "empty_body"
         content_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
         source_url = canonicalize_url(source_url)
-        with self._connect() as connection:
+        with self._connection() as connection:
             existing = connection.execute(
                 "SELECT body_text FROM notices WHERE notice_id = ?", (notice_id,)
             ).fetchone()
@@ -253,7 +265,7 @@ class NoticeStore:
                        VALUES (?, ?, ?, ?)""",
                     (run_id, notice_id, fetched_at, "empty detail body; retained existing archive"),
                 )
-                return
+                return "failed"
             connection.execute(
                 """
                 INSERT INTO notices(
@@ -290,6 +302,7 @@ class NoticeStore:
                 "INSERT INTO notices_fts(notice_id, title, body_text) VALUES (?, ?, ?)",
                 (notice_id, title, body_text),
             )
+        return status
 
     def record_detail_failure(
         self,
@@ -300,7 +313,7 @@ class NoticeStore:
         occurred_at: str | None = None,
     ) -> None:
         occurred_at = occurred_at or utc_now()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "UPDATE notices SET fetch_status='failed', updated_at=? WHERE notice_id=?",
                 (occurred_at, notice_id),
@@ -312,7 +325,7 @@ class NoticeStore:
             )
 
     def begin_sync_run(self, *, started_at: str | None = None) -> int:
-        with self._connect() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(
                 "INSERT INTO sync_runs(started_at, status) VALUES (?, 'running')",
                 (started_at or utc_now(),),
@@ -331,7 +344,7 @@ class NoticeStore:
     ) -> None:
         if status not in {"completed", "failed", "interrupted"}:
             raise ValueError("invalid final run status")
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """UPDATE sync_runs SET finished_at=?, status=?, stats_json=?, error_message=?
                    WHERE run_id=?""",
@@ -428,7 +441,7 @@ class NoticeStore:
         return {"notice_count": count["count"] if count else 0, "last_run": last_run}
 
     def integrity_check(self) -> dict[str, object]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             quick_check = connection.execute("PRAGMA quick_check").fetchone()[0]
             notices_count = connection.execute("SELECT COUNT(*) FROM notices").fetchone()[0]
             fts_count = connection.execute("SELECT COUNT(*) FROM notices_fts").fetchone()[0]
@@ -445,11 +458,11 @@ class NoticeStore:
         }
 
     def _row(self, sql: str, parameters: tuple[object, ...] = ()) -> dict[str, object] | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(sql, parameters).fetchone()
         return dict(row) if row is not None else None
 
     def _rows(self, sql: str, parameters: tuple[object, ...] = ()) -> list[dict[str, object]]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(sql, parameters).fetchall()
         return [dict(row) for row in rows]

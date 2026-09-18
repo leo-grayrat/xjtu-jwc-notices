@@ -4,6 +4,7 @@ import pytest
 
 from xjtu_jwc_notices.parsers import (
     NonContentPageError,
+    ParseError,
     extract_notice_id,
     parse_detail,
     parse_list,
@@ -37,6 +38,14 @@ def test_parse_live_list_uses_bracketed_category_and_legacy_link() -> None:
     )
     assert page.entries[1].category == "教学运行"
     assert page.entries[1].title == "秋季学期课程调整通知"
+
+
+def test_parse_list_rejects_unrecognized_success_page() -> None:
+    with pytest.raises(ParseError, match="recognized notice list"):
+        parse_list(
+            "<html><body><h1>Service temporarily unavailable</h1></body></html>",
+            "https://jwc.xjtu.edu.cn/jxxx/jxtz2.htm",
+        )
 
 
 @pytest.mark.parametrize(

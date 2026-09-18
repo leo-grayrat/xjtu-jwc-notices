@@ -21,3 +21,12 @@ def test_default_paths_fall_back_to_user_data_directory(monkeypatch, tmp_path):
 
     assert paths.data_dir == tmp_path / "share" / "xjtu-jwc-notices"
 
+
+def test_default_paths_honor_explicit_environment_override(monkeypatch, tmp_path):
+    custom = tmp_path / "shared-archive"
+    monkeypatch.setenv("XJTU_JWC_NOTICES_DATA_DIR", str(custom))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    paths = AppPaths.default(platform="win32")
+
+    assert paths.data_dir == custom

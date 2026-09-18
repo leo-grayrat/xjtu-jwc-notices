@@ -68,10 +68,38 @@ def test_sync_command_closes_session_and_prints_stats(monkeypatch, tmp_path, cap
     assert events[-1] == ("exit",)
 
 
+def test_sync_command_returns_nonzero_when_any_notice_failed(monkeypatch, tmp_path, capsys):
+    class FakeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class FakeService:
+        def __init__(self, session, store):
+            pass
+
+        def sync(self):
+            return {"pages": 1, "failed": 1}
+
+    monkeypatch.setattr(cli, "XjtuSiteSession", FakeSession)
+    monkeypatch.setattr(cli, "NoticeSyncService", FakeService)
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "sync"])
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out)["failed"] == 1
+
+
 def test_schedule_install_propagates_subprocess_failure(monkeypatch, capsys):
     class FailedScheduler:
-        def install(self, time):
+        def install(self, time, *, data_dir):
             assert time == "08:00"
+            assert data_dir == AppPaths.default().data_dir.resolve()
             return subprocess.CompletedProcess([], 1, stdout="", stderr="denied")
 
     monkeypatch.setattr(cli, "TaskScheduler", FailedScheduler)
@@ -80,4 +108,3 @@ def test_schedule_install_propagates_subprocess_failure(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "denied" in capsys.readouterr().err
-

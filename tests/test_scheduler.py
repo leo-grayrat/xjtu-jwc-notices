@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +15,8 @@ def test_scheduler_installs_daily_task_with_current_python():
         return subprocess.CompletedProcess(argv, 0, stdout="SUCCESS", stderr="")
 
     scheduler = TaskScheduler(runner=runner, python_executable=sys.executable)
-    result = scheduler.install("08:00")
+    data_dir = Path(r"D:\Archive Folder\xjtu")
+    result = scheduler.install("08:00", data_dir=data_dir)
 
     assert result.returncode == 0
     assert calls == [
@@ -25,7 +27,16 @@ def test_scheduler_installs_daily_task_with_current_python():
                 "/TN",
                 TASK_NAME,
                 "/TR",
-                f'"{sys.executable}" -m xjtu_jwc_notices.cli sync',
+                subprocess.list2cmdline(
+                    [
+                        sys.executable,
+                        "-m",
+                        "xjtu_jwc_notices.cli",
+                        "--data-dir",
+                        str(data_dir.resolve()),
+                        "sync",
+                    ]
+                ),
                 "/SC",
                 "DAILY",
                 "/ST",
@@ -48,7 +59,7 @@ def test_scheduler_rejects_invalid_time_before_running(value):
     scheduler = TaskScheduler(runner=runner)
 
     with pytest.raises(ValueError, match="HH:MM"):
-        scheduler.install(value)
+        scheduler.install(value, data_dir=Path("data"))
     assert called is False
 
 
@@ -67,4 +78,3 @@ def test_scheduler_queries_and_uninstalls_named_task():
         ["schtasks.exe", "/Query", "/TN", TASK_NAME, "/FO", "LIST"],
         ["schtasks.exe", "/Delete", "/TN", TASK_NAME, "/F"],
     ]
-

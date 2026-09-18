@@ -35,11 +35,11 @@ def _print_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
-def _schedule(args: argparse.Namespace) -> int:
+def _schedule(args: argparse.Namespace, paths: AppPaths) -> int:
     scheduler = TaskScheduler()
     try:
         if args.schedule_command == "install":
-            result = scheduler.install(args.time)
+            result = scheduler.install(args.time, data_dir=paths.data_dir.resolve())
         elif args.schedule_command == "status":
             result = scheduler.status()
         else:
@@ -56,9 +56,9 @@ def _schedule(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "schedule":
-        return _schedule(args)
     paths = AppPaths.from_data_dir(args.data_dir) if args.data_dir else AppPaths.default()
+    if args.command == "schedule":
+        return _schedule(args, paths)
     store = NoticeStore(paths.database)
     try:
         if args.command == "sync":
@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(result)
         if args.command == "check" and not result["ok"]:
             return 1
+        if args.command == "sync" and result.get("failed", 0):
+            return 1
         return 0
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
@@ -84,4 +86,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

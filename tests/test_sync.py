@@ -32,7 +32,7 @@ def list_page(entries, next_url=None):
         for notice_id, title, category, published in entries
     )
     next_link = f'<a href="{next_url}">下一页</a>' if next_url else ""
-    return f"<html><ul>{rows}</ul>{next_link}</html>"
+    return f'<html><div class="list_right"><ul>{rows}</ul></div>{next_link}</html>'
 
 
 def detail(notice_id, title, category, published, body):
@@ -237,3 +237,128 @@ def test_interrupted_changed_notice_is_marked_for_retry_before_detail_fetch(tmp_
         FakeSession(resumed), store, list_url=start, refresh_after_days=None
     ).sync()
     assert store.get_notice("1")["body_text"] == "新正文"
+
+
+def test_failed_deep_notice_is_retried_before_quiet_page_stopping(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    store = make_store(tmp_path)
+    store.upsert_detail(
+        notice_id="999",
+        title="深页通知",
+        category="教学运行",
+        published_date="2026-02-01",
+        source_url=url("999"),
+        body_text="旧正文",
+        body_html="<p>旧正文</p>",
+        fetched_at="2026-09-01T00:00:00Z",
+    )
+    run_id = store.begin_sync_run(started_at="2026-09-01T00:00:00Z")
+    store.finish_sync_run(
+        run_id,
+        status="completed",
+        stats={},
+        finished_at="2026-09-01T00:01:00Z",
+        backfill_completed=True,
+    )
+    store.record_detail_failure(
+        "999", "temporary failure", run_id=None, occurred_at="2026-09-02T00:00:00Z"
+    )
+    session = FakeSession(
+        {
+            start: Response(200, list_page([])),
+            url("999"): Response(
+                200, detail("999", "深页通知", "教学运行", "2026-02-01", "恢复正文")
+            ),
+        }
+    )
+
+    result = NoticeSyncService(
+        session, store, list_url=start, refresh_after_days=None
+    ).sync()
+
+    assert session.calls[0] == url("999")
+    assert store.get_notice("999")["body_text"] == "恢复正文"
+    assert result["ok"] == 1
+
+
+def test_stale_deep_notice_is_refreshed_before_quiet_page_stopping(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    store = make_store(tmp_path)
+    store.upsert_detail(
+        notice_id="998",
+        title="深页旧通知",
+        category="教学运行",
+        published_date="2026-02-01",
+        source_url=url("998"),
+        body_text="旧正文",
+        body_html="<p>旧正文</p>",
+        fetched_at="2026-09-01T00:00:00Z",
+    )
+    run_id = store.begin_sync_run(started_at="2026-09-01T00:00:00Z")
+    store.finish_sync_run(
+        run_id,
+        status="completed",
+        stats={},
+        finished_at="2026-09-01T00:01:00Z",
+        backfill_completed=True,
+    )
+    session = FakeSession(
+        {
+            start: Response(200, list_page([])),
+            url("998"): Response(
+                200, detail("998", "深页旧通知", "教学运行", "2026-02-01", "刷新正文")
+            ),
+        }
+    )
+
+    result = NoticeSyncService(
+        session,
+        store,
+        list_url=start,
+        refresh_after_days=7,
+        now=lambda: "2026-09-18T00:00:00Z",
+    ).sync()
+
+    assert session.calls[0] == url("998")
+    assert store.get_notice("998")["body_text"] == "刷新正文"
+    assert result["ok"] == 1
+
+
+def test_empty_refresh_of_existing_body_counts_as_failure(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    store = make_store(tmp_path)
+    initial = {
+        start: Response(200, list_page([("1", "通知", "教学运行", "2026-09-15")])),
+        url("1"): Response(200, detail("1", "通知", "教学运行", "2026-09-15", "旧正文")),
+    }
+    NoticeSyncService(FakeSession(initial), store, list_url=start).sync()
+    changed = {
+        start: Response(200, list_page([("1", "通知更正", "教学运行", "2026-09-16")])),
+        url("1"): Response(200, detail("1", "通知更正", "教学运行", "2026-09-16", "")),
+    }
+
+    result = NoticeSyncService(
+        FakeSession(changed), store, list_url=start, refresh_after_days=None
+    ).sync()
+
+    assert result["failed"] == 1
+    assert result["empty"] == 0
+    assert store.get_notice("1")["body_text"] == "旧正文"
+    assert store.sync_status()["last_run"]["status"] == "failed"
+
+
+def test_detail_failure_marks_run_failed_and_keeps_backfill_pending(tmp_path) -> None:
+    start = "https://jwc.xjtu.edu.cn/jxtz2.htm"
+    store = make_store(tmp_path)
+    session = FakeSession(
+        {
+            start: Response(200, list_page([("1", "通知", "教学运行", "2026-09-15")])),
+            url("1"): Response(503, "unavailable"),
+        }
+    )
+
+    result = NoticeSyncService(session, store, list_url=start).sync()
+
+    assert result["failed"] == 1
+    assert store.sync_status()["last_run"]["status"] == "failed"
+    assert store.initial_backfill_complete() is False

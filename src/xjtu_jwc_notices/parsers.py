@@ -143,8 +143,11 @@ def parse_list(html: str, page_url: str) -> NoticeListPage:
     if is_non_content_page(html):
         raise NonContentPageError("list response is an access-control or challenge page")
     soup = BeautifulSoup(html, "html.parser")
+    notice_list = soup.select_one(".list_right, .list")
+    if notice_list is None:
+        raise ParseError("list response has no recognized notice list container")
     entries: list[NoticeListEntry] = []
-    for item in soup.select("li"):
+    for item in notice_list.select("li"):
         link = next(
             (
                 candidate

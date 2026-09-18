@@ -21,6 +21,8 @@ class AppPaths:
 
     @classmethod
     def default(cls, *, platform: str | None = None) -> AppPaths:
+        if os.environ.get("XJTU_JWC_NOTICES_DATA_DIR"):
+            return cls.from_data_dir(os.environ["XJTU_JWC_NOTICES_DATA_DIR"])
         current_platform = platform or sys.platform
         if current_platform == "win32" and os.environ.get("LOCALAPPDATA"):
             root = Path(os.environ["LOCALAPPDATA"])
@@ -29,4 +31,3 @@ class AppPaths:
         else:
             root = Path.home() / ".local" / "share"
         return cls.from_data_dir(root / "xjtu-jwc-notices")
-
