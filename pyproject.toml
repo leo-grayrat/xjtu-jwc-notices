@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xjtu-jwc-notices"
+version = "0.1.0"
+description = "Local archive and MCP server for Xi'an Jiaotong University teaching notices"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "xjtu-jwc-notices contributors" }]
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "httpx>=0.27,<1",
+  "mcp>=1.13,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+xjtu-notices = "xjtu_jwc_notices.cli:main"
+xjtu-notices-mcp = "xjtu_jwc_notices.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xjtu_jwc_notices"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
